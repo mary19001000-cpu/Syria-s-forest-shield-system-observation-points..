@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>درع الغابة — تسجيل الدخول</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,sans-serif}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#0d2a0d,#1a3a1a);color:#fff;padding:15px}
+.box{background:#111;padding:30px;border-radius:14px;border:1px solid #2e7d32;width:100%;max-width:380px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+h1{color:#66bb6a;font-size:1.5rem;margin-bottom:4px}
+.sub{color:#b2dfdb;font-size:.85rem;margin-bottom:16px}
+input{width:100%;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #444;background:#1e1e1e;color:#fff;font-size:.95rem}
+input:focus{outline:2px solid #4CAF50;border-color:transparent}
+button{width:100%;padding:12px;margin-top:10px;border:none;border-radius:8px;background:#2e7d32;color:#fff;font-size:1rem;cursor:pointer;font-weight:bold}
+button:hover{background:#43a047}
+button:disabled{opacity:.5;cursor:wait}
+.err{color:#ef5350;font-size:.85rem;min-height:1.3em;margin-top:6px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs div{flex:1;padding:8px;border-radius:8px;background:#1a1a1a;cursor:pointer;font-size:.85rem;color:#999}
+.tabs div.on{background:#2e7d32;color:#fff;font-weight:bold}
+.loading{color:#4CAF50;font-size:.85rem;margin-top:8px;display:none}
+.hint{font-size:.72rem;color:#888;margin-top:8px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🛡️ درع الغابة</h1>
+  <div class="sub">منظومة إدارة حرائق الغابات</div>
+  <div class="tabs"><div id="tabLogin" class="on">دخول</div><div id="tabReg">حساب جديد</div></div>
+  <input type="email" id="email" placeholder="البريد الإلكتروني" dir="ltr" style="text-align:left" autocomplete="email">
+  <input type="password" id="pwd" placeholder="كلمة المرور (6+ أحرف)" autocomplete="current-password" minlength="6">
+  <button id="btnGo" onclick="go()">دخول</button>
+  <div class="err" id="err"></div>
+  <div class="loading" id="loading">⏳ جاري التحقق...</div>
+  <div class="hint">الحساب الجديد يُنشأ بصلاحية مراقب افتراضياً.</div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+'use strict';
+var isReg = false;
+var firebaseConfig = {
+  apiKey: "AIzaSyBIiA-JYDCM8Wum1FymaTjrQYvafg61iTo",
+  authDomain: "forest-shield-syria.firebaseapp.com",
+  projectId: "forest-shield-syria",
+  storageBucket: "forest-shield-syria.firebasestorage.app",
+  messagingSenderId: "882990548445",
+  appId: "1:882990548445:web:9336952581fd285d82a234"
+};
+var auth = null, db = null;
+try {
+  if (typeof firebase !== 'undefined') {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+  }
+} catch(e) { console.error('Firebase init:', e); }
+
+var $ = function(id){ return document.getElementById(id); };
+
+function clearSession(){
+  ['fs_session','fs_auth','fs_uid','fs_email','fs_role','fs_name'].forEach(function(k){ localStorage.removeItem(k); });
+}
+
+function redirectByRole(role){
+  if (role === 'observer') location.replace('observer.html');
+  else if (role === 'crew') location.replace('driver.html');
+  else location.replace('ops.html');
+}
+
+function setLoading(on, msg){
+  var l = $('loading');
+  l.textContent = msg || '⏳ جاري التحقق...';
+  l.style.display = on ? 'block' : 'none';
+}
+
+function resolveUserRole(user){
+  if (!db) return Promise.resolve({ role: 'observer', name: '' });
+
+  return db.collection('users').doc(user.uid).get().then(function(doc){
+    if (doc.exists) {
+      var data = doc.data() || {};
+      return { role: data.role || 'observer', name: data.name || '' };
+    }
+    return db.collection('users').where('email','==', user.email).limit(1).get().then(function(snap){
+      if (!snap.empty) {
+        var data = snap.docs[0].data() || {};
+        return { role: data.role || 'observer', name: data.name || '' };
+      }
+      if (isReg) {
+        var fallbackName = (user.email || '').split('@')[0];
+        return db.collection('users').doc(user.uid).set({
+          email: user.email, name: fallbackName, role: 'observer', createdAt: new Date().toISOString()
+        }).then(function(){ return { role: 'observer', name: fallbackName }; });
+      }
+      return { role: 'observer', name: '' };
+    });
+  });
+}
+
+function go(){
+  var email = $('email').value.trim();
+  var pwd = $('pwd').value;
+  var err = $('err');
+  err.textContent = '';
+
+  if (!email || !pwd) { err.textContent = 'أدخل البريد وكلمة المرور'; return; }
+  if (!auth) { err.textContent = 'تعذر الاتصال بخدمة المصادقة'; return; }
+
+  var btn = $('btnGo');
+  btn.disabled = true;
+  setLoading(true, isReg ? '⏳ إنشاء حساب...' : '⏳ جاري الدخول...');
+
+  var req = isReg ? auth.createUserWithEmailAndPassword(email, pwd) : auth.signInWithEmailAndPassword(email, pwd);
+
+  req.then(function(cred){
+    return resolveUserRole(cred.user).then(function(result){
+      localStorage.setItem('fs_session','active');
+      localStorage.setItem('fs_auth','1');
+      localStorage.setItem('fs_uid', cred.user.uid);
+      localStorage.setItem('fs_email', email);
+      localStorage.setItem('fs_role', result.role);
+      localStorage.setItem('fs_name', result.name || '');
+      redirectByRole(result.role);
+    });
+  }).catch(function(e){
+    setLoading(false);
+    btn.disabled = false;
+    var msgs = {
+      'auth/invalid-credential':'بيانات الدخول غير صحيحة',
+      'auth/user-not-found':'المستخدم غير موجود',
+      'auth/wrong-password':'كلمة المرور غير صحيحة',
+      'auth/email-already-in-use':'البريد مسجل مسبقاً',
+      'auth/weak-password':'كلمة المرور ضعيفة (6+ أحرف)',
+      'auth/invalid-email':'بريد غير صالح',
+      'auth/network-request-failed':'تحقق من الاتصال بالإنترنت'
+    };
+    err.textContent = msgs[e.code] || e.message || 'حدث خطأ غير متوقع';
+  });
+}
+
+$('tabLogin').onclick = function(){ isReg=false; this.classList.add('on'); $('tabReg').classList.remove('on'); $('btnGo').textContent='دخول'; };
+$('tabReg').onclick = function(){ isReg=true; this.classList.add('on'); $('tabLogin').classList.remove('on'); $('btnGo').textContent='إنشاء الحساب'; };
+$('pwd').addEventListener('keydown', function(e){ if(e.key==='Enter') go(); });
+$('email').addEventListener('keydown', function(e){ if(e.key==='Enter') go(); });
+
+try {
+  if (localStorage.getItem('fs_session') === 'active' && auth) {
+    auth.onAuthStateChanged(function(u){
+      if (u) redirectByRole(localStorage.getItem('fs_role') || 'admin');
+      else clearSession();
+    });
+  }
+} catch(e) {}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('./sw.js').catch(function(){});
+  });
+}
+</script>
+</body>
+</html>

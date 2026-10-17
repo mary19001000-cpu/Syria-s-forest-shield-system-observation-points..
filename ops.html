@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a1a3a">
+<title>درع الغابة — غرفة العمليات</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,sans-serif}
+body{background:#0a0a0a;color:#e0e0e0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:#111;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #4CAF50;z-index:100;flex-wrap:wrap;gap:8px}
+header h1{font-size:1.05rem;color:#4CAF50}
+header .stats{display:flex;gap:10px;font-size:0.75rem}
+header .stats span{padding:3px 8px;background:#1a1a1a;border-radius:12px;border:1px solid #333}
+#logoutBtn{background:#d32f2f;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:bold}
+.main{flex:1;display:flex;min-height:0}
+#map{flex:1;background:#1a1a1a;min-height:0}
+.sidebar{width:340px;background:#111;border-left:2px solid #222;display:flex;flex-direction:column;overflow:hidden}
+.sidebar .tabs{display:flex;border-bottom:1px solid #222}
+.sidebar .tabs button{flex:1;padding:10px;background:#111;border:none;color:#888;cursor:pointer;font-size:0.8rem;font-weight:bold}
+.sidebar .tabs button.active{color:#4CAF50;background:#1a1a1a;border-bottom:2px solid #4CAF50}
+.tab-content{flex:1;overflow-y:auto;padding:10px}
+.card{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px;margin-bottom:8px;font-size:0.8rem}
+.card.new{border-color:#f44336}
+.card.processing{border-color:#FF9800}
+.card.done{border-color:#4CAF50}
+.card .row{display:flex;justify-content:space-between;margin:3px 0}
+.card .row .lbl{color:#888}
+.card .row .val{color:#fff;font-weight:bold;text-align:left;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.card .actions button{flex:1;padding:6px;border:none;border-radius:5px;font-size:0.75rem;font-weight:bold;color:#fff;cursor:pointer;min-width:70px}
+.btn-assign{background:#2196F3}
+.btn-cancel{background:#d32f2f}
+.btn-done{background:#4CAF50}
+.btn-del{background:#666}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:12px 20px;border-radius:6px;font-size:0.85rem;z-index:2000;display:none}
+.toast.show{display:block}
+.toast.success{background:#2e7d32}.toast.error{background:#c62828}.toast.info{background:#1565c0}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.9);display:none;justify-content:center;align-items:center;z-index:1000;padding:15px}
+.modal-overlay.active{display:flex}
+.modal-box{background:#1a1a1a;border:2px solid #4CAF50;border-radius:12px;padding:20px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto}
+.modal-box h3{color:#4CAF50;margin-bottom:12px;text-align:center;font-size:1rem}
+.modal-box select,.modal-box input{padding:9px;margin:5px 0;border-radius:6px;border:1px solid #444;background:#222;color:#fff;width:100%;font-size:0.85rem}
+.modal-box button{width:100%;padding:10px;margin-top:6px;border:none;border-radius:6px;font-weight:bold;color:#fff;cursor:pointer;font-size:0.85rem}
+.legend{position:absolute;bottom:15px;left:15px;background:rgba(0,0,0,0.85);padding:8px 12px;border-radius:8px;font-size:0.7rem;z-index:500;line-height:1.9;border:1px solid #333}
+.legend span{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:4px}
+@media (max-width:700px){
+  .main{flex-direction:column}
+  .sidebar{width:100%;height:45vh;border-left:none;border-top:2px solid #222}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>👑 غرفة العمليات — درع الغابة</h1>
+  <div class="stats">
+    <span id="statReports">🔥 0</span>
+    <span id="statDrivers">🚒 0</span>
+    <span id="statOnline">🟢 0</span>
+  </div>
+  <button id="logoutBtn" type="button">🚪 خروج</button>
+</header>
+<div class="main">
+  <div id="map"></div>
+  <div class="sidebar">
+    <div class="tabs">
+      <button class="tab active" data-tab="reports">🚨 البلاغات</button>
+      <button class="tab" data-tab="drivers">🚒 السائقون</button>
+      <button class="tab" data-tab="users">👥 المستخدمون</button>
+    </div>
+    <div class="tab-content" id="tabReports"></div>
+    <div class="tab-content" id="tabDrivers" style="display:none"></div>
+    <div class="tab-content" id="tabUsers" style="display:none"></div>
+  </div>
+</div>
+<div class="legend">
+  <div><span style="background:#f44336"></span> بلاغ جديد</div>
+  <div><span style="background:#FF9800"></span> قيد المعالجة</div>
+  <div><span style="background:#4CAF50"></span> مخمد</div>
+  <div><span style="background:#FF6F00"></span> سائق</div>
+  <div><span style="background:#00BCD4"></span> مراقب</div>
+</div>
+
+<div class="modal-overlay" id="assignModal">
+  <div class="modal-box">
+    <h3>تعيين سائق للبلاغ</h3>
+    <div id="assignInfo" style="font-size:0.8rem;color:#ccc;margin-bottom:8px;line-height:1.8"></div>
+    <select id="assignDriver"></select>
+    <button id="btnConfirmAssign" style="background:#2196F3">✅ تأكيد التعيين</button>
+    <button id="btnCloseAssign" style="background:#555">إلغاء</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="roleModal">
+  <div class="modal-box">
+    <h3>تغيير صلاحية المستخدم</h3>
+    <div id="roleInfo" style="font-size:0.8rem;color:#ccc;margin-bottom:8px;line-height:1.8"></div>
+    <select id="roleSelect">
+      <option value="observer">👁️ مراقب</option>
+      <option value="crew">🚒 سائق / طاقم</option>
+      <option value="admin">👑 مدير عمليات</option>
+    </select>
+    <button id="btnConfirmRole" style="background:#4CAF50">✅ حفظ</button>
+    <button id="btnCloseRole" style="background:#555">إلغاء</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+'use strict';
+if (localStorage.getItem('fs_session') !== 'active') location.replace('index.html');
+if (localStorage.getItem('fs_role') !== 'admin') location.replace('index.html');
+
+var firebaseConfig = {
+  apiKey: "AIzaSyBIiA-JYDCM8Wum1FymaTjrQYvafg61iTo",
+  authDomain: "forest-shield-syria.firebaseapp.com",
+  projectId: "forest-shield-syria",
+  storageBucket: "forest-shield-syria.firebasestorage.app",
+  messagingSenderId: "882990548445",
+  appId: "1:882990548445:web:9336952581fd285d82a234"
+};
+var auth = null, db = null;
+try {
+  if (typeof firebase !== 'undefined') {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth(); db = firebase.firestore();
+  }
+} catch(e) { console.error('Firebase init:', e); }
+
+var map = null;
+var reports = [], drivers = [], users = [];
+var reportMarkers = {}, driverMarkers = {};
+var assignTargetId = null, roleTargetId = null;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function toast(msg, type){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function(){ t.className = 'toast'; }, 4000);
+}
+function statusClass(s){
+  return s === 'تم الإخماد' ? 'done' : (s === 'قيد المعالجة' || s === 'وصل') ? 'processing' : 'new';
+}
+function statusColor(s){
+  return s === 'تم الإخماد' ? '#4CAF50' : (s === 'قيد المعالجة' || s === 'وصل') ? '#FF9800' : '#f44336';
+}
+
+function initMap(){
+  map = L.map('map', { tap:false }).setView([34.8, 38.0], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OSM', maxZoom:19 }).addTo(map);
+}
+
+function updateMap(){
+  Object.keys(reportMarkers).forEach(function(id){ map.removeLayer(reportMarkers[id]); });
+  Object.keys(driverMarkers).forEach(function(id){ map.removeLayer(driverMarkers[id]); });
+  reportMarkers = {}; driverMarkers = {};
+
+  reports.forEach(function(r){
+    if (!r.lat || !r.lng) return;
+    var c = statusColor(r.status);
+    var icon = L.divIcon({ html:'<div style="background:' + c + ';width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 12px ' + c + ';"></div>', iconSize:[18,18], iconAnchor:[9,9], className:'' });
+    reportMarkers[r.id] = L.marker([r.lat, r.lng], { icon:icon }).bindPopup(
+      '<b style="color:' + c + '">🔥 ' + esc(r.type || 'حريق') + '</b><br>' +
+      '⚠️ ' + esc(r.severity || '-') + '<br>📍 ' + esc(r.location || '-') + '<br>' +
+      '🚒 ' + esc(r.assignedDriverName || 'غير معيّن') + '<br>📌 ' + esc(r.status || 'جديد')
+    ).addTo(map);
+  });
+
+  drivers.forEach(function(d){
+    if (!d.lat || !d.lng) return;
+    var color = d.status === 'في الطريق' ? '#2196F3' : d.status === 'وصل' ? '#4CAF50' : '#FF6F00';
+    var icon = L.divIcon({ html:'<div style="background:' + color + ';width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 10px ' + color + ';display:flex;align-items:center;justify-content:center;font-size:11px">🚒</div>', iconSize:[22,22], iconAnchor:[11,11], className:'' });
+    driverMarkers[d.id] = L.marker([d.lat, d.lng], { icon:icon }).bindPopup(
+      '<b style="color:' + color + '">🚒 ' + esc(d.name || 'سائق') + '</b><br>📌 ' + esc(d.status || 'متاح')
+    ).addTo(map);
+  });
+}
+
+function renderReports(){
+  var el = document.getElementById('tabReports');
+  if (!reports.length) { el.innerHTML = '<div class="card">لا توجد بلاغات بعد</div>'; updateStats(); return; }
+  el.innerHTML = reports.map(function(r){
+    var cls = statusClass(r.status);
+    var actions = '<button class="btn-assign" onclick="openAssign(\'' + r.id + '\')">تعيين سائق</button>';
+    if (r.status !== 'قيد المعالجة' && r.status !== 'تم الإخماد') actions += '<button class="btn-cancel" onclick="setReportStatus(\'' + r.id + '\',\'قيد المعالجة\')">بدء المعالجة</button>';
+    if (r.status !== 'تم الإخماد') actions += '<button class="btn-done" onclick="setReportStatus(\'' + r.id + '\',\'تم الإخماد\')">تم الإخماد</button>';
+    actions += '<button class="btn-del" onclick="deleteReport(\'' + r.id + '\')">حذف</button>';
+    return '<div class="card ' + cls + '">' +
+      '<div class="row"><span class="lbl">🔥 النوع</span><span class="val">' + esc(r.type || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">⚠️ الخطورة</span><span class="val">' + esc(r.severity || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">📍 الموقع</span><span class="val">' + esc(r.location || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">📌 الحالة</span><span class="val" style="color:' + statusColor(r.status) + '">' + esc(r.status || 'جديد') + '</span></div>' +
+      '<div class="row"><span class="lbl">🚒 السائق</span><span class="val">' + esc(r.assignedDriverName || 'غير معيّن') + '</span></div>' +
+      '<div class="row"><span class="lbl">👤 المبلّغ</span><span class="val">' + esc(r.reporterName || r.reporterEmail || '-') + '</span></div>' +
+      (r.description ? '<div class="row"><span class="lbl">📝 وصف</span><span class="val">' + esc(r.description) + '</span></div>' : '') +
+      '<div class="actions">' + actions + '</div></div>';
+  }).join('');
+  updateStats();
+}
+
+function renderDrivers(){
+  var el = document.getElementById('tabDrivers');
+  if (!drivers.length) { el.innerHTML = '<div class="card">لا يوجد سائقون متصلون</div>'; updateStats(); return; }
+  el.innerHTML = drivers.map(function(d){
+    var color = d.status === 'في الطريق' ? '#2196F3' : d.status === 'وصل' ? '#4CAF50' : '#FF6F00';
+    return '<div class="card"><div class="row"><span class="lbl">🚒 الاسم</span><span class="val">' + esc(d.name || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">📌 الحالة</span><span class="val" style="color:' + color + '">' + esc(d.status || 'متاح') + '</span></div>' +
+      '<div class="row"><span class="lbl">🕒 آخر تحديث</span><span class="val">' + esc(d.updatedAtISO || d.lastSeen || '-') + '</span></div></div>';
+  }).join('');
+  updateStats();
+}
+
+function renderUsers(){
+  var el = document.getElementById('tabUsers');
+  if (!users.length) { el.innerHTML = '<div class="card">لا يوجد مستخدمون</div>'; updateStats(); return; }
+  el.innerHTML = users.map(function(u){
+    var roleName = u.role === 'admin' ? '👑 مدير' : u.role === 'crew' ? '🚒 سائق' : '👁️ مراقب';
+    return '<div class="card"><div class="row"><span class="lbl">👤 الاسم</span><span class="val">' + esc(u.name || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">📧 البريد</span><span class="val" dir="ltr">' + esc(u.email || '-') + '</span></div>' +
+      '<div class="row"><span class="lbl">🔑 الصلاحية</span><span class="val">' + roleName + '</span></div>' +
+      '<div class="actions"><button class="btn-assign" onclick="openRole(\'' + esc(u.id) + '\',\'' + esc(u.role || 'observer') + '\')">تغيير الصلاحية</button></div></div>';
+  }).join('');
+  updateStats();
+}
+
+function updateStats(){
+  var active = reports.filter(function(r){ return r.status !== 'تم الإخماد'; }).length;
+  var online = drivers.filter(function(d){ return d.lat && d.lng; }).length;
+  document.getElementById('statReports').textContent = '🔥 ' + active;
+  document.getElementById('statDrivers').textContent = '🚒 ' + drivers.length;
+  document.getElementById('statOnline').textContent = '🟢 ' + online;
+}
+
+window.setReportStatus = function(id, status){
+  if (!db) { toast('لا يوجد اتصال بالخادم', 'error'); return; }
+  db.collection('reports').doc(id).update({
+    status: status,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAtISO: new Date().toISOString()
+  }).then(function(){ toast('تم تحديث حالة البلاغ', 'success'); })
+    .catch(function(){ toast('تعذر التحديث', 'error'); });
+};
+
+window.deleteReport = function(id){
+  if (!confirm('حذف هذا البلاغ نهائياً؟')) return;
+  if (!db) return;
+  db.collection('reports').doc(id).delete()
+    .then(function(){ toast('تم حذف البلاغ', 'success'); })
+    .catch(function(){ toast('تعذر الحذف', 'error'); });
+};
+
+window.openAssign = function(id){
+  assignTargetId = id;
+  var r = reports.find(function(x){ return x.id === id; });
+  document.getElementById('assignInfo').innerHTML =
+    '🔥 ' + esc(r.type || 'حريق') + ' — ' + esc(r.severity || '-') + '<br>📍 ' + esc(r.location || '-');
+  var sel = document.getElementById('assignDriver');
+  var available = drivers.filter(function(d){ return d.status !== 'في الطريق'; });
+  sel.innerHTML = available.length
+    ? available.map(function(d){ return '<option value="' + esc(d.id) + '">' + esc(d.name || d.id) + '</option>'; }).join('')
+    : '<option value="">لا يوجد سائقون متاحون</option>';
+  document.getElementById('assignModal').classList.add('active');
+};
+
+document.getElementById('btnConfirmAssign').addEventListener('click', function(){
+  var driverId = document.getElementById('assignDriver').value;
+  if (!driverId || !db) { toast('اختر سائقاً', 'error'); return; }
+  var d = drivers.find(function(x){ return x.id === driverId; });
+  db.collection('reports').doc(assignTargetId).update({
+    assignedDriverId: driverId,
+    assignedDriverName: d ? (d.name || '') : '',
+    status: 'قيد المعالجة',
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAtISO: new Date().toISOString()
+  }).then(function(){
+    document.getElementById('assignModal').classList.remove('active');
+    toast('تم تعيين السائق', 'success');
+  }).catch(function(){ toast('تعذر التعيين', 'error'); });
+});
+document.getElementById('btnCloseAssign').addEventListener('click', function(){
+  document.getElementById('assignModal').classList.remove('active');
+});
+
+window.openRole = function(id, currentRole){
+  roleTargetId = id;
+  var u = users.find(function(x){ return x.id === id; });
+  document.getElementById('roleInfo').innerHTML = '👤 ' + esc(u ? (u.name || u.email) : id);
+  document.getElementById('roleSelect').value = currentRole || 'observer';
+  document.getElementById('roleModal').classList.add('active');
+};
+document.getElementById('btnConfirmRole').addEventListener('click', function(){
+  var role = document.getElementById('roleSelect').value;
+  if (!db || !roleTargetId) return;
+  db.collection('users').doc(roleTargetId).update({ role: role })
+    .then(function(){
+      document.getElementById('roleModal').classList.remove('active');
+      toast('تم تغيير الصلاحية', 'success');
+    }).catch(function(){ toast('تعذر التغيير', 'error'); });
+});
+document.getElementById('btnCloseRole').addEventListener('click', function(){
+  document.getElementById('roleModal').classList.remove('active');
+});
+
+document.querySelectorAll('.sidebar .tabs button').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('.sidebar .tabs button').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    ['reports','drivers','users'].forEach(function(t){
+      document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = (t === btn.dataset.tab) ? 'block' : 'none';
+    });
+  });
+});
+
+document.getElementById('logoutBtn').addEventListener('click', function(){
+  if (auth) auth.signOut().catch(function(){});
+  ['fs_session','fs_auth','fs_uid','fs_email','fs_role','fs_name'].forEach(function(k){ localStorage.removeItem(k); });
+  location.replace('index.html');
+});
+
+function listenAll(){
+  if (!db) return;
+  db.collection('reports').orderBy('createdAt','desc').limit(200)
+    .onSnapshot(function(snap){
+      reports = snap.docs.map(function(d){ var v = d.data() || {}; v.id = d.id; return v; });
+      renderReports(); updateMap();
+    }, function(){});
+  db.collection('drivers').limit(100)
+    .onSnapshot(function(snap){
+      drivers = snap.docs.map(function(d){ var v = d.data() || {}; v.id = d.id; return v; });
+      renderDrivers(); updateMap();
+    }, function(){});
+  db.collection('users').limit(200)
+    .onSnapshot(function(snap){
+      users = snap.docs.map(function(d){ var v = d.data() || {}; v.id = d.id; return v; });
+      renderUsers();
+    }, function(){});
+}
+
+window.addEventListener('load', function(){ initMap(); listenAll(); });
+</script>
+</body>
+</html>

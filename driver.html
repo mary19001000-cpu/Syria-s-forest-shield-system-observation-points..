@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a3a1a">
+<title>درع الغابة — سائق</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,sans-serif}
+body{background:#0a0a0a;color:#e0e0e0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:#111;padding:10px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #ff6f00;z-index:100;flex-wrap:wrap;gap:6px}
+header h1{font-size:1rem;color:#ff6f00}
+#logoutBtn{background:#d32f2f;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:bold}
+#driverStatus{font-size:0.75rem;color:#4CAF50}
+#map{flex:1;background:#1a1a1a;min-height:0}
+#locationStatus{position:absolute;top:60px;right:10px;background:rgba(0,0,0,0.85);color:#4CAF50;padding:6px 12px;border-radius:20px;font-size:0.75rem;z-index:500;border:1px solid #4CAF50;max-width:45vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tasks{position:absolute;bottom:15px;left:15px;right:15px;z-index:500;display:flex;flex-direction:column;gap:8px;max-height:45vh;overflow-y:auto}
+.task{background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:10px;font-size:0.8rem;box-shadow:0 4px 12px rgba(0,0,0,0.5)}
+.task .t-title{color:#f44336;font-weight:bold;margin-bottom:4px}
+.task .t-row{display:flex;justify-content:space-between;margin:2px 0}
+.task .t-row .lbl{color:#888}
+.task .t-actions{display:flex;gap:6px;margin-top:8px}
+.task .t-actions button{flex:1;padding:8px;border:none;border-radius:6px;font-size:0.78rem;font-weight:bold;color:#fff;cursor:pointer}
+.btn-go{background:#2196F3}
+.btn-arrived{background:#FF9800}
+.btn-done{background:#4CAF50}
+.empty{background:#1a1a1a;border:1px dashed #444;border-radius:10px;padding:14px;text-align:center;color:#888;font-size:0.85rem}
+.toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:12px 20px;border-radius:6px;font-size:0.9rem;z-index:2000;display:none;max-width:90%;text-align:center}
+.toast.show{display:block}
+.toast.success{background:#2e7d32}.toast.error{background:#c62828}.toast.info{background:#1565c0}
+</style>
+</head>
+<body>
+<header>
+  <h1>🚒 درع الغابة — سائق</h1>
+  <div id="driverStatus">🟢 متاح</div>
+  <button id="logoutBtn" type="button">🚪 خروج</button>
+</header>
+<div id="map"></div>
+<div id="locationStatus">📍 غير محدد</div>
+<div class="tasks" id="tasks"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script>
+'use strict';
+if (localStorage.getItem('fs_session') !== 'active') location.replace('index.html');
+if (localStorage.getItem('fs_role') !== 'crew') location.replace('index.html');
+
+var firebaseConfig = {
+  apiKey: "AIzaSyBIiA-JYDCM8Wum1FymaTjrQYvafg61iTo",
+  authDomain: "forest-shield-syria.firebaseapp.com",
+  projectId: "forest-shield-syria",
+  storageBucket: "forest-shield-syria.firebasestorage.app",
+  messagingSenderId: "882990548445",
+  appId: "1:882990548445:web:9336952581fd285d82a234"
+};
+var auth = null, db = null;
+try {
+  if (typeof firebase !== 'undefined') {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth(); db = firebase.firestore();
+  }
+} catch(e) { console.error('Firebase init:', e); }
+
+var uid = localStorage.getItem('fs_uid') || '';
+var driverName = localStorage.getItem('fs_name') || (localStorage.getItem('fs_email') || 'سائق').split('@')[0];
+var map = null, userMarker = null, watchId = null;
+var myReports = [], reportMarkers = {};
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function toast(msg, type){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(function(){ t.className = 'toast'; }, 4000);
+}
+function setLocationStatus(msg){ document.getElementById('locationStatus').textContent = msg; }
+
+function initMap(){
+  map = L.map('map', { tap:false }).setView([34.8, 38.0], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OSM', maxZoom:19 }).addTo(map);
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution:'© Esri', maxZoom:19 });
+}
+
+function pushLocation(lat, lng){
+  if (!db || !uid) return;
+  db.collection('drivers').doc(uid).set({
+    uid: uid, name: driverName, lat: lat, lng: lng,
+    status: document.getElementById('driverStatus').textContent.indexOf('في الطريق') >= 0 ? 'في الطريق' : 'متاح',
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAtISO: new Date().toISOString()
+  }, { merge:true }).catch(function(){});
+}
+
+function startTracking(){
+  if (!navigator.geolocation) { toast('المتصفح لا يدعم تحديد الموقع', 'error'); return; }
+  setLocationStatus('⏳ جاري تحديد الموقع...');
+  watchId = navigator.geolocation.watchPosition(function(pos){
+    var lat = pos.coords.latitude, lng = pos.coords.longitude;
+    setLocationStatus('📍 ' + lat.toFixed(5) + ', ' + lng.toFixed(5));
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([lat,lng]).addTo(map);
+    pushLocation(lat, lng);
+  }, function(){
+    setLocationStatus('⚠️ تعذر تحديد الموقع');
+  }, { enableHighAccuracy:true, maximumAge:30000, timeout:20000 });
+}
+
+function reportColor(r){
+  return r.status === 'تم الإخماد' ? '#4CAF50' : r.status === 'وصل' ? '#FF9800' : '#f44336';
+}
+
+function renderTasks(){
+  var box = document.getElementById('tasks');
+  Object.keys(reportMarkers).forEach(function(id){ if (map) map.removeLayer(reportMarkers[id]); });
+  reportMarkers = {};
+  if (!myReports.length) {
+    box.innerHTML = '<div class="empty">لا توجد مهام مخصصة لك حالياً</div>';
+    return;
+  }
+  box.innerHTML = myReports.map(function(r){
+    var dest = 'https://www.google.com/maps/dir/?api=1&destination=' + r.lat + ',' + r.lng;
+    return '<div class="task">' +
+      '<div class="t-title">🔥 ' + esc(r.type || 'حريق') + ' — ' + esc(r.severity || '-') + '</div>' +
+      '<div class="t-row"><span class="lbl">📍 الموقع</span><span>' + esc(r.location || '-') + '</span></div>' +
+      '<div class="t-row"><span class="lbl">📌 الحالة</span><span style="color:' + reportColor(r) + '">' + esc(r.status || '-') + '</span></div>' +
+      (r.description ? '<div class="t-row"><span class="lbl">📝 الوصف</span><span>' + esc(r.description) + '</span></div>' : '') +
+      '<div class="t-actions">' +
+        '<button class="btn-go" onclick="window.open(\'' + dest + '\',\'_blank\')">🧭 الملاحة</button>' +
+        (r.status !== 'وصل' && r.status !== 'تم الإخماد' ? '<button class="btn-arrived" onclick="setStatus(\'' + r.id + '\',\'وصل\')">وصلت</button>' : '') +
+        (r.status !== 'تم الإخماد' ? '<button class="btn-done" onclick="setStatus(\'' + r.id + '\',\'تم الإخماد\')">تم الإخماد</button>' : '') +
+      '</div></div>';
+  }).join('');
+
+  myReports.forEach(function(r){
+    if (map && r.lat && r.lng) {
+      var c = reportColor(r);
+      var icon = L.divIcon({ html:'<div style="background:' + c + ';width:20px;height:20px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 12px ' + c + ';"></div>', iconSize:[20,20], iconAnchor:[10,10], className:'' });
+      reportMarkers[r.id] = L.marker([r.lat, r.lng], { icon: icon }).bindPopup('<b style="color:' + c + '">🔥 ' + esc(r.type) + '</b><br>📌 ' + esc(r.status)).addTo(map);
+    }
+  });
+}
+
+window.setStatus = function(id, status){
+  if (!db) { toast('لا يوجد اتصال بالخادم', 'error'); return; }
+  db.collection('reports').doc(id).update({
+    status: status,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedAtISO: new Date().toISOString()
+  }).then(function(){
+    toast('تم تحديث الحالة: ' + status, 'success');
+    if (status === 'وصل') document.getElementById('driverStatus').textContent = '🟠 في الطريق';
+    if (status === 'تم الإخماد') document.getElementById('driverStatus').textContent = '🟢 متاح';
+  }).catch(function(){ toast('تعذر تحديث الحالة', 'error'); });
+};
+
+function listenMyReports(){
+  if (!db) return;
+  db.collection('reports').where('assignedDriverId', '==', uid)
+    .onSnapshot(function(snap){
+      myReports = snap.docs.map(function(d){ var v = d.data() || {}; v.id = d.id; return v; })
+        .sort(function(a,b){ return String(b.createdAtISO||'').localeCompare(String(a.createdAtISO||'')); });
+      renderTasks();
+    }, function(){});
+}
+
+document.getElementById('logoutBtn').addEventListener('click', function(){
+  if (auth) auth.signOut().catch(function(){});
+  ['fs_session','fs_auth','fs_uid','fs_email','fs_role','fs_name'].forEach(function(k){ localStorage.removeItem(k); });
+  location.replace('index.html');
+});
+
+window.addEventListener('load', function(){
+  initMap();
+  startTracking();
+  listenMyReports();
+});
+</script>
+</body>
+</html>
